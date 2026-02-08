@@ -573,8 +573,5 @@ IEA*1*000000001~`;
 
 export default App;
 
-// OLD (line ~200-210):
-   const res = await fetch("http://localhost:5000/api/generate-856", {
-   
-   // NEW:
-   const res = await fetch('https://edi-validator-generator-react-node-js.onrender.com', {
+const baseUrl = 'https://validator.generator.reactjs-orderer.com';
+const res = await fetch(baseUrl);
