@@ -12,16 +12,14 @@ services:
         value: production
     healthCheckPath: /api/health
 
-  # Frontend Static Site
-  - type: static
+  # Frontend Web Service (serving static build)
+  - type: web
     name: edi-frontend
+    runtime: node
+    env: node
     plan: free
-    buildCommand: cd frontend && npm install && npm run build
-    staticPublishPath: ./frontend/build
+    buildCommand: cd frontend && npm install && npm run build && npm install -g serve
+    startCommand: cd frontend && serve -s build -l 3000
     envVars:
       - key: REACT_APP_API_URL
         sync: false
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
