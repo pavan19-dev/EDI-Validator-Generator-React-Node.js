@@ -7,7 +7,8 @@ import {
 } from '@mui/material';
 import {
   ContentCopy, Download, Delete, CheckCircle,
-  Error, Info, Receipt, LocalShipping
+  Error, Info, Receipt, LocalShipping,
+  SwapHoriz, DataObject, Code
 } from '@mui/icons-material';
 
 // Dark theme configuration
@@ -82,6 +83,11 @@ function App() {
   const [tabValue, setTabValue] = useState(0);
   const [activeStep, setActiveStep] = useState(0);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+
+  // Converter State
+  const [converterInput, setConverterInput] = useState('');
+  const [converterOutput, setConverterOutput] = useState('');
+  const [conversionDirection, setConversionDirection] = useState('x12-to-json'); // or 'json-to-x12'
 
   const steps = ['Enter Purchase Order', 'Generate ASN', 'Generate Invoice'];
 
@@ -287,6 +293,75 @@ IEA*1*000000001~`;
     }
   };
 
+  // Generic X12 to JSON Converter
+  const convertX12toJSON = (x12) => {
+    try {
+      const cleanX12 = x12.replace(/[\r\n]+/g, '').trim();
+      if (!cleanX12) return [];
+
+      const segments = cleanX12.split('~').filter(s => s.length > 0);
+      return segments.map(segment => {
+        const elements = segment.split('*');
+        const tag = elements.shift(); // Remove first element (tag)
+        return { tag, elements };
+      });
+    } catch (e) {
+      throw new Error('Failed to parse X12: ' + e.message);
+    }
+  };
+
+  // Generic JSON to X12 Converter
+  const convertJSONtoX12 = (jsonString) => {
+    try {
+      const data = JSON.parse(jsonString);
+      if (!Array.isArray(data)) throw new Error('Root must be an array of segments');
+
+      return data.map(seg => {
+        if (!seg.tag || !Array.isArray(seg.elements)) throw new Error('Invalid segment format');
+        return `${seg.tag}*${seg.elements.join('*')}~`;
+      }).join('\n');
+    } catch (e) {
+      throw new Error('Failed to generate X12: ' + e.message);
+    }
+  };
+
+  const handleConvert = () => {
+    if (!converterInput.trim()) {
+      showSnackbar('Please enter input data', 'error');
+      return;
+    }
+
+    try {
+      let result;
+      if (conversionDirection === 'x12-to-json') {
+        const json = convertX12toJSON(converterInput);
+        result = JSON.stringify(json, null, 2);
+        showSnackbar('Converted X12 to JSON successfully!', 'success');
+      } else {
+        result = convertJSONtoX12(converterInput);
+        showSnackbar('Converted JSON to X12 successfully!', 'success');
+      }
+      setConverterOutput(result);
+    } catch (e) {
+      showSnackbar(e.message, 'error');
+    }
+  };
+
+  const loadConverterSample = () => {
+    if (conversionDirection === 'x12-to-json') {
+      setConverterInput(sampleX12_4010);
+    } else {
+      const sample = [
+        { "tag": "ISA", "elements": ["00", "          ", "00", "          ", "ZZ", "SENDERID       ", "ZZ", "RECEIVERID     ", "250115", "1200", "U", "00401", "000000001", "0", "T", ">"] },
+        { "tag": "GS", "elements": ["PO", "SENDERID", "RECEIVERID", "20250115", "1200", "1", "X", "004010"] },
+        { "tag": "ST", "elements": ["850", "0001"] },
+        { "tag": "BEG", "elements": ["00", "NE", "PO123456", "", "20250115"] }
+      ];
+      setConverterInput(JSON.stringify(sample, null, 2));
+    }
+    showSnackbar('Sample loaded', 'info');
+  };
+
   const handleGenerate856 = async () => {
     if (!poInput.trim()) {
       showSnackbar('Please enter PO data', 'error');
@@ -486,6 +561,7 @@ IEA*1*000000001~`;
               <Tab label="Input" />
               <Tab label="ASN Result" disabled={!asnResult} />
               <Tab label="Invoice Result" disabled={!invoiceResult} />
+              <Tab label="Converter Tool" icon={<SwapHoriz />} iconPosition="start" />
             </Tabs>
 
             {/* Input Tab */}
@@ -594,6 +670,101 @@ IEA*1*000000001~`;
                   </Paper>
                 </Box>
               )}
+            </TabPanel>
+
+            {/* Converter Tab */}
+            <TabPanel value={tabValue} index={3}>
+              <Box sx={{ p: 3 }}>
+                <Stack direction="row" spacing={2} justifyContent="center" sx={{ mb: 3 }}>
+                  <Chip
+                    icon={<Code />}
+                    label="X12"
+                    color={conversionDirection === 'x12-to-json' ? 'primary' : 'default'}
+                    onClick={() => setConversionDirection('x12-to-json')}
+                    sx={{ cursor: 'pointer', px: 2 }}
+                  />
+                  <IconButton color="primary" onClick={() => {
+                    setConversionDirection(prev => prev === 'x12-to-json' ? 'json-to-x12' : 'x12-to-json');
+                    setConverterInput(converterOutput);
+                    setConverterOutput(converterInput);
+                  }}>
+                    <SwapHoriz />
+                  </IconButton>
+                  <Chip
+                    icon={<DataObject />}
+                    label="JSON"
+                    color={conversionDirection === 'json-to-x12' ? 'primary' : 'default'}
+                    onClick={() => setConversionDirection('json-to-x12')}
+                    sx={{ cursor: 'pointer', px: 2 }}
+                  />
+                </Stack>
+
+                <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+                  {/* Input Side */}
+                  <Box sx={{ flex: 1 }}>
+                    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                      <Typography variant="subtitle2" color="text.secondary">Input ({conversionDirection === 'x12-to-json' ? 'X12' : 'JSON'})</Typography>
+                      <Stack direction="row" spacing={1}>
+                        <Button size="small" onClick={loadConverterSample} startIcon={<Info />}>Sample</Button>
+                        <Button size="small" color="error" onClick={() => setConverterInput('')} startIcon={<Delete />}>Clear</Button>
+                      </Stack>
+                    </Stack>
+                    <TextField
+                      fullWidth
+                      multiline
+                      rows={15}
+                      value={converterInput}
+                      onChange={(e) => setConverterInput(e.target.value)}
+                      placeholder={conversionDirection === 'x12-to-json' ? "Paste X12 here..." : "Paste JSON here..."}
+                      variant="outlined"
+                      sx={{
+                        '& .MuiInputBase-root': {
+                          bgcolor: 'background.default',
+                          fontFamily: '"Roboto Mono", "Courier New", monospace',
+                          fontSize: '0.85rem',
+                        }
+                      }}
+                    />
+                  </Box>
+
+                  <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                    <Button
+                      variant="contained"
+                      onClick={handleConvert}
+                      sx={{ minWidth: 40, height: 40, borderRadius: '50%' }}
+                    >
+                      <SwapHoriz />
+                    </Button>
+                  </Box>
+
+                  {/* Output Side */}
+                  <Box sx={{ flex: 1 }}>
+                    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                      <Typography variant="subtitle2" color="text.secondary">Output ({conversionDirection === 'x12-to-json' ? 'JSON' : 'X12'})</Typography>
+                      <Tooltip title="Copy">
+                        <IconButton size="small" onClick={() => copyToClipboard(converterOutput)}>
+                          <ContentCopy fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                    <TextField
+                      fullWidth
+                      multiline
+                      rows={15}
+                      value={converterOutput}
+                      InputProps={{ readOnly: true }}
+                      variant="outlined"
+                      sx={{
+                        '& .MuiInputBase-root': {
+                          bgcolor: 'background.default',
+                          fontFamily: '"Roboto Mono", "Courier New", monospace',
+                          fontSize: '0.85rem',
+                        }
+                      }}
+                    />
+                  </Box>
+                </Stack>
+              </Box>
             </TabPanel>
           </Paper>
 
