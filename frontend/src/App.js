@@ -44,51 +44,51 @@ function App() {
   const validateX12Format = (text, version) => {
     const errors = [];
     const warnings = [];
-    
+
     const cleanText = text.replace(/[\r\n]+/g, '').trim();
-    
+
     // Check if it starts with ISA
     if (!cleanText.startsWith('ISA')) {
       errors.push('X12 must start with ISA segment');
     }
-    
+
     // Check for required segments
     const segments = cleanText.split('~').filter(s => s.length > 0);
     const segmentTypes = segments.map(s => s.substring(0, 3));
-    
+
     // ISA check
     if (!segmentTypes.includes('ISA')) {
       errors.push('Missing ISA (Interchange Control Header) segment');
     }
-    
+
     // GS check
     if (!segmentTypes.includes('GS*')) {
       errors.push('Missing GS (Functional Group Header) segment');
     }
-    
+
     // ST check
     if (!segmentTypes.includes('ST*')) {
       errors.push('Missing ST (Transaction Set Header) segment');
     }
-    
+
     // BEG check for 850 PO
     if (!segmentTypes.includes('BEG')) {
       errors.push('Missing BEG (Beginning Segment for Purchase Order) segment');
     }
-    
+
     // Check for PO1 items
     const hasItems = segmentTypes.some(s => s === 'PO1');
     if (!hasItems) {
       warnings.push('No PO1 (Purchase Order Line Item) segments found');
     }
-    
+
     // Version-specific validation
     if (version === '4010') {
       const isa = segments.find(s => s.startsWith('ISA'));
       if (isa && !isa.includes('00401')) {
         warnings.push('ISA version should be 00401 for VICS 4010');
       }
-      
+
       const gs = segments.find(s => s.startsWith('GS'));
       if (gs && !gs.includes('004010')) {
         warnings.push('GS version should be 004010 for VICS 4010');
@@ -98,13 +98,13 @@ function App() {
       if (isa && !isa.includes('00501')) {
         warnings.push('ISA version should be 00501 for VICS 5010');
       }
-      
+
       const gs = segments.find(s => s.startsWith('GS'));
       if (gs && !gs.includes('005010')) {
         warnings.push('GS version should be 005010 for VICS 5010');
       }
     }
-    
+
     // Check for proper termination
     if (!segmentTypes.includes('SE*')) {
       errors.push('Missing SE (Transaction Set Trailer) segment');
@@ -115,12 +115,12 @@ function App() {
     if (!segmentTypes.includes('IEA')) {
       errors.push('Missing IEA (Interchange Control Trailer) segment');
     }
-    
+
     // Check segment delimiter
     if (!cleanText.includes('~')) {
       errors.push('Missing segment delimiter (~)');
     }
-    
+
     return {
       valid: errors.length === 0,
       errors,
@@ -132,22 +132,22 @@ function App() {
   const validateJSONFormat = (text) => {
     const errors = [];
     const warnings = [];
-    
+
     try {
       const data = JSON.parse(text);
-      
+
       // Check required fields
       if (!data.poNumber) {
         errors.push('Missing required field: poNumber');
       }
-      
+
       if (!data.items || !Array.isArray(data.items)) {
         errors.push('Missing or invalid field: items (must be an array)');
       } else {
         if (data.items.length === 0) {
           warnings.push('Items array is empty');
         }
-        
+
         // Validate each item
         data.items.forEach((item, index) => {
           if (!item.sku) {
@@ -164,20 +164,20 @@ function App() {
           }
         });
       }
-      
+
       // Check optional but recommended fields
       if (!data.shipTo) {
         warnings.push('Missing shipTo information (will use default)');
       }
-      
+
       if (!data.billTo) {
         warnings.push('Missing billTo information (will use shipTo as default)');
       }
-      
+
     } catch (e) {
       errors.push('Invalid JSON format: ' + e.message);
     }
-    
+
     return {
       valid: errors.length === 0,
       errors,
@@ -259,7 +259,7 @@ IEA*1*000000001~`;
       const beg = segments.find(s => s.startsWith('BEG'))?.split('*');
       const n1st = segments.find(s => s.startsWith('N1*ST'))?.split('*');
       const n1bt = segments.find(s => s.startsWith('N1*BT'))?.split('*');
-      
+
       const items = [];
       segments.forEach(seg => {
         if (seg.startsWith('PO1')) {
@@ -272,13 +272,13 @@ IEA*1*000000001~`;
         }
       });
 
-      return { 
+      return {
         poNumber: beg ? beg[3] : "ERR",
         shipTo: n1st ? { name: n1st[2], id: n1st[4] } : { name: "RETAIL DC", id: "0001" },
         billTo: n1bt ? { name: n1bt[2], id: n1bt[4] } : null,
-        items: items 
+        items: items
       };
-    } catch (e) { 
+    } catch (e) {
       throw new Error('Invalid X12 format: ' + e.message);
     }
   };
@@ -296,31 +296,31 @@ IEA*1*000000001~`;
 
     setLoading(true);
     setError('');
-    
+
     try {
       let poData;
-      
+
       if (inputFormat === 'x12') {
         poData = parseX12toJS(poInput);
       } else {
         poData = JSON.parse(poInput);
       }
 
-      const res = await fetch('http://localhost:5000/api/generate-856', {
+      const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000'}/api/generate-856`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ po: poData, vicsVersion }),
       });
-      
+
       if (!res.ok) throw new Error('Server error');
-      
+
       const data = await res.json();
       setAsnResult(data);
-      
-    } catch (err) { 
+
+    } catch (err) {
       setError(`❌ Error: ${err.message}`);
-    } finally { 
-      setLoading(false); 
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -332,35 +332,35 @@ IEA*1*000000001~`;
 
     setLoading(true);
     setError('');
-    
+
     try {
       let poData;
-      
+
       if (inputFormat === 'x12') {
         poData = parseX12toJS(poInput);
       } else {
         poData = JSON.parse(poInput);
       }
 
-      const res = await fetch('http://localhost:5000/api/generate-810', {
+      const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000'}/api/generate-810`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          asn: asnResult.json, 
+        body: JSON.stringify({
+          asn: asnResult.json,
           po: poData,
-          vicsVersion 
+          vicsVersion
         }),
       });
-      
+
       if (!res.ok) throw new Error('Server error');
-      
+
       const data = await res.json();
       setInvoiceResult(data);
-      
-    } catch (err) { 
+
+    } catch (err) {
       setError(`❌ Error: ${err.message}`);
-    } finally { 
-      setLoading(false); 
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -399,8 +399,8 @@ IEA*1*000000001~`;
         <div className="format-selection-bar">
           <div className="format-group">
             <label className="format-label">Input Format:</label>
-            <select 
-              value={inputFormat} 
+            <select
+              value={inputFormat}
               onChange={(e) => setInputFormat(e.target.value)}
               className="format-select"
             >
@@ -411,8 +411,8 @@ IEA*1*000000001~`;
 
           <div className="format-group">
             <label className="format-label">VICS Version:</label>
-            <select 
-              value={vicsVersion} 
+            <select
+              value={vicsVersion}
               onChange={(e) => setVicsVersion(e.target.value)}
               className="format-select"
             >
@@ -448,7 +448,7 @@ IEA*1*000000001~`;
                 <span className="validation-icon">❌ Validation Failed</span>
               )}
             </div>
-            
+
             {validationStatus.errors.length > 0 && (
               <div className="validation-errors">
                 <strong>Errors:</strong>
@@ -459,7 +459,7 @@ IEA*1*000000001~`;
                 </ul>
               </div>
             )}
-            
+
             {validationStatus.warnings.length > 0 && (
               <div className="validation-warnings">
                 <strong>Warnings:</strong>
@@ -483,10 +483,10 @@ IEA*1*000000001~`;
               Paste your 850 PO in {inputFormat.toUpperCase()} format
             </span>
           </div>
-          <textarea 
-            rows="15" 
-            value={poInput} 
-            onChange={(e) => setPoInput(e.target.value)} 
+          <textarea
+            rows="15"
+            value={poInput}
+            onChange={(e) => setPoInput(e.target.value)}
             placeholder={`Paste your 850 Purchase Order in ${inputFormat.toUpperCase()} format here...`}
             className="input-textarea large"
           />
@@ -494,15 +494,15 @@ IEA*1*000000001~`;
 
         {/* Generation Buttons */}
         <div className="button-grid">
-          <button 
-            onClick={handleGenerate856} 
+          <button
+            onClick={handleGenerate856}
             disabled={loading || (validationStatus && !validationStatus.valid)}
             className="btn btn-primary btn-asn"
           >
             {loading ? '⏳ Processing...' : '📦 Generate 856 ASN'}
           </button>
-          <button 
-            onClick={handleGenerate810} 
+          <button
+            onClick={handleGenerate810}
             disabled={loading || !asnResult}
             className="btn btn-primary btn-invoice"
           >
@@ -518,14 +518,14 @@ IEA*1*000000001~`;
                 ✅ {asnResult.title} Created
               </h2>
               <div className="result-actions">
-                <button 
-                  onClick={() => copyToClipboard(asnResult.x12)} 
+                <button
+                  onClick={() => copyToClipboard(asnResult.x12)}
                   className="btn btn-secondary"
                 >
                   📋 Copy
                 </button>
-                <button 
-                  onClick={() => downloadFile(asnResult.x12, `856_ASN_${asnResult.json.asnNumber}.edi`)} 
+                <button
+                  onClick={() => downloadFile(asnResult.x12, `856_ASN_${asnResult.json.asnNumber}.edi`)}
                   className="btn btn-download"
                 >
                   ⬇️ Download
@@ -544,14 +544,14 @@ IEA*1*000000001~`;
                 ✅ {invoiceResult.title} Created
               </h2>
               <div className="result-actions">
-                <button 
-                  onClick={() => copyToClipboard(invoiceResult.x12)} 
+                <button
+                  onClick={() => copyToClipboard(invoiceResult.x12)}
                   className="btn btn-secondary"
                 >
                   📋 Copy
                 </button>
-                <button 
-                  onClick={() => downloadFile(invoiceResult.x12, `810_Invoice_${invoiceResult.json.invoiceNumber}.edi`)} 
+                <button
+                  onClick={() => downloadFile(invoiceResult.x12, `810_Invoice_${invoiceResult.json.invoiceNumber}.edi`)}
                   className="btn btn-download"
                 >
                   ⬇️ Download
@@ -572,6 +572,3 @@ IEA*1*000000001~`;
 }
 
 export default App;
-
-const baseUrl = 'https://validator.generator.reactjs-orderer.com';
-const res = await fetch(baseUrl);
