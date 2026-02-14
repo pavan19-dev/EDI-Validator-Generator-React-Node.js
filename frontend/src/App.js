@@ -1,15 +1,89 @@
 import React, { useState, useEffect } from 'react';
-import './App.css';
+import {
+  Container, Box, Typography, TextField, Button, Card, CardContent,
+  Tabs, Tab, Chip, Alert, Snackbar, IconButton,
+  Select, MenuItem, FormControl, InputLabel, Paper, Stepper, Step,
+  StepLabel, CircularProgress, Tooltip, Stack, ThemeProvider, createTheme, CssBaseline
+} from '@mui/material';
+import {
+  ContentCopy, Download, Delete, CheckCircle,
+  Error, Info, Receipt, LocalShipping
+} from '@mui/icons-material';
+
+// Dark theme configuration
+const darkTheme = createTheme({
+  palette: {
+    mode: 'dark',
+    primary: {
+      main: '#90caf9',
+    },
+    secondary: {
+      main: '#ce93d8',
+    },
+    background: {
+      default: '#121212',
+      paper: '#1e1e1e',
+    },
+  },
+  typography: {
+    fontFamily: '"Outfit", "Roboto", "Helvetica", "Arial", sans-serif',
+    h3: {
+      fontWeight: 700,
+    },
+    h6: {
+      fontWeight: 600,
+    },
+    subtitle1: {
+      fontWeight: 400,
+    },
+  },
+  components: {
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none',
+          fontWeight: 500,
+        },
+      },
+    },
+    MuiPaper: {
+      styleOverrides: {
+        root: {
+          backgroundImage: 'none',
+        },
+      },
+    },
+    MuiAppBar: {
+      styleOverrides: {
+        root: {
+          backgroundImage: 'none',
+        },
+      },
+    },
+  },
+});
+
+function TabPanel({ children, value, index }) {
+  return (
+    <div hidden={value !== index} style={{ paddingTop: 24 }}>
+      {value === index && children}
+    </div>
+  );
+}
 
 function App() {
   const [poInput, setPoInput] = useState('');
-  const [inputFormat, setInputFormat] = useState('x12'); // 'x12' or 'json'
-  const [vicsVersion, setVicsVersion] = useState('4010'); // '4010' or '5010'
+  const [inputFormat, setInputFormat] = useState('x12');
+  const [vicsVersion, setVicsVersion] = useState('4010');
   const [asnResult, setAsnResult] = useState(null);
   const [invoiceResult, setInvoiceResult] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const [validationStatus, setValidationStatus] = useState(null);
+  const [tabValue, setTabValue] = useState(0);
+  const [activeStep, setActiveStep] = useState(0);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+
+  const steps = ['Enter Purchase Order', 'Generate ASN', 'Generate Invoice'];
 
   // Real-time validation
   useEffect(() => {
@@ -47,85 +121,35 @@ function App() {
 
     const cleanText = text.replace(/[\r\n]+/g, '').trim();
 
-    // Check if it starts with ISA
     if (!cleanText.startsWith('ISA')) {
       errors.push('X12 must start with ISA segment');
     }
 
-    // Check for required segments
     const segments = cleanText.split('~').filter(s => s.length > 0);
     const segmentTypes = segments.map(s => s.substring(0, 3));
 
-    // ISA check
-    if (!segmentTypes.includes('ISA')) {
-      errors.push('Missing ISA (Interchange Control Header) segment');
-    }
+    if (!segmentTypes.includes('ISA')) errors.push('Missing ISA segment');
+    if (!segmentTypes.includes('GS*')) errors.push('Missing GS segment');
+    if (!segmentTypes.includes('ST*')) errors.push('Missing ST segment');
+    if (!segmentTypes.includes('BEG')) errors.push('Missing BEG segment');
 
-    // GS check
-    if (!segmentTypes.includes('GS*')) {
-      errors.push('Missing GS (Functional Group Header) segment');
-    }
-
-    // ST check
-    if (!segmentTypes.includes('ST*')) {
-      errors.push('Missing ST (Transaction Set Header) segment');
-    }
-
-    // BEG check for 850 PO
-    if (!segmentTypes.includes('BEG')) {
-      errors.push('Missing BEG (Beginning Segment for Purchase Order) segment');
-    }
-
-    // Check for PO1 items
     const hasItems = segmentTypes.some(s => s === 'PO1');
-    if (!hasItems) {
-      warnings.push('No PO1 (Purchase Order Line Item) segments found');
-    }
+    if (!hasItems) warnings.push('No PO1 segments found');
 
-    // Version-specific validation
     if (version === '4010') {
       const isa = segments.find(s => s.startsWith('ISA'));
-      if (isa && !isa.includes('00401')) {
-        warnings.push('ISA version should be 00401 for VICS 4010');
-      }
-
-      const gs = segments.find(s => s.startsWith('GS'));
-      if (gs && !gs.includes('004010')) {
-        warnings.push('GS version should be 004010 for VICS 4010');
-      }
+      if (isa && !isa.includes('00401')) warnings.push('ISA version should be 00401 for VICS 4010');
     } else if (version === '5010') {
       const isa = segments.find(s => s.startsWith('ISA'));
-      if (isa && !isa.includes('00501')) {
-        warnings.push('ISA version should be 00501 for VICS 5010');
-      }
-
-      const gs = segments.find(s => s.startsWith('GS'));
-      if (gs && !gs.includes('005010')) {
-        warnings.push('GS version should be 005010 for VICS 5010');
-      }
+      if (isa && !isa.includes('00501')) warnings.push('ISA version should be 00501 for VICS 5010');
     }
 
-    // Check for proper termination
-    if (!segmentTypes.includes('SE*')) {
-      errors.push('Missing SE (Transaction Set Trailer) segment');
-    }
-    if (!segmentTypes.includes('GE*')) {
-      errors.push('Missing GE (Functional Group Trailer) segment');
-    }
-    if (!segmentTypes.includes('IEA')) {
-      errors.push('Missing IEA (Interchange Control Trailer) segment');
-    }
+    if (!segmentTypes.includes('SE*')) errors.push('Missing SE segment');
+    if (!segmentTypes.includes('GE*')) errors.push('Missing GE segment');
+    if (!segmentTypes.includes('IEA')) errors.push('Missing IEA segment');
+    if (!cleanText.includes('~')) errors.push('Missing segment delimiter (~)');
 
-    // Check segment delimiter
-    if (!cleanText.includes('~')) {
-      errors.push('Missing segment delimiter (~)');
-    }
-
-    return {
-      valid: errors.length === 0,
-      errors,
-      warnings
-    };
+    return { valid: errors.length === 0, errors, warnings };
   };
 
   // JSON Validation
@@ -136,56 +160,31 @@ function App() {
     try {
       const data = JSON.parse(text);
 
-      // Check required fields
-      if (!data.poNumber) {
-        errors.push('Missing required field: poNumber');
-      }
+      if (!data.poNumber) errors.push('Missing required field: poNumber');
 
       if (!data.items || !Array.isArray(data.items)) {
         errors.push('Missing or invalid field: items (must be an array)');
       } else {
-        if (data.items.length === 0) {
-          warnings.push('Items array is empty');
-        }
+        if (data.items.length === 0) warnings.push('Items array is empty');
 
-        // Validate each item
         data.items.forEach((item, index) => {
-          if (!item.sku) {
-            errors.push(`Item ${index + 1}: Missing SKU`);
-          }
-          if (!item.quantity && item.quantity !== 0) {
-            errors.push(`Item ${index + 1}: Missing quantity`);
-          }
-          if (item.quantity <= 0) {
-            warnings.push(`Item ${index + 1}: Quantity should be greater than 0`);
-          }
-          if (!item.price && item.price !== 0) {
-            warnings.push(`Item ${index + 1}: Missing price (required for invoice generation)`);
-          }
+          if (!item.sku) errors.push(`Item ${index + 1}: Missing SKU`);
+          if (!item.quantity && item.quantity !== 0) errors.push(`Item ${index + 1}: Missing quantity`);
+          if (item.quantity <= 0) warnings.push(`Item ${index + 1}: Quantity should be greater than 0`);
+          if (!item.price && item.price !== 0) warnings.push(`Item ${index + 1}: Missing price`);
         });
       }
 
-      // Check optional but recommended fields
-      if (!data.shipTo) {
-        warnings.push('Missing shipTo information (will use default)');
-      }
-
-      if (!data.billTo) {
-        warnings.push('Missing billTo information (will use shipTo as default)');
-      }
+      if (!data.shipTo) warnings.push('Missing shipTo information');
+      if (!data.billTo) warnings.push('Missing billTo information');
 
     } catch (e) {
       errors.push('Invalid JSON format: ' + e.message);
     }
 
-    return {
-      valid: errors.length === 0,
-      errors,
-      warnings
-    };
+    return { valid: errors.length === 0, errors, warnings };
   };
 
-  // Sample data
   const sampleX12_4010 = `ISA*00*          *00*          *ZZ*SENDERID       *ZZ*RECEIVERID     *250115*1200*U*00401*000000001*0*T*>~
 GS*PO*SENDERID*RECEIVERID*20250115*1200*1*X*004010~
 ST*850*0001~
@@ -242,14 +241,19 @@ IEA*1*000000001~`;
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
+    showSnackbar('File downloaded successfully', 'success');
   };
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text).then(() => {
-      alert('✅ Copied to clipboard!');
+      showSnackbar('Copied to clipboard!', 'success');
     }).catch(() => {
-      alert('❌ Failed to copy');
+      showSnackbar('Failed to copy', 'error');
     });
+  };
+
+  const showSnackbar = (message, severity) => {
+    setSnackbar({ open: true, message, severity });
   };
 
   const parseX12toJS = (ediText) => {
@@ -285,17 +289,16 @@ IEA*1*000000001~`;
 
   const handleGenerate856 = async () => {
     if (!poInput.trim()) {
-      setError('❌ Please enter PO data');
+      showSnackbar('Please enter PO data', 'error');
       return;
     }
 
     if (validationStatus && !validationStatus.valid) {
-      setError('❌ Please fix validation errors before generating ASN');
+      showSnackbar('Please fix validation errors before generating ASN', 'error');
       return;
     }
 
     setLoading(true);
-    setError('');
 
     try {
       let poData;
@@ -316,9 +319,12 @@ IEA*1*000000001~`;
 
       const data = await res.json();
       setAsnResult(data);
+      setActiveStep(1);
+      setTabValue(1);
+      showSnackbar('856 ASN generated successfully!', 'success');
 
     } catch (err) {
-      setError(`❌ Error: ${err.message}`);
+      showSnackbar(`Error: ${err.message}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -326,12 +332,11 @@ IEA*1*000000001~`;
 
   const handleGenerate810 = async () => {
     if (!asnResult) {
-      setError('❌ Please generate 856 ASN first');
+      showSnackbar('Please generate 856 ASN first', 'error');
       return;
     }
 
     setLoading(true);
-    setError('');
 
     try {
       let poData;
@@ -356,9 +361,12 @@ IEA*1*000000001~`;
 
       const data = await res.json();
       setInvoiceResult(data);
+      setActiveStep(2);
+      setTabValue(2);
+      showSnackbar('810 Invoice generated successfully!', 'success');
 
     } catch (err) {
-      setError(`❌ Error: ${err.message}`);
+      showSnackbar(`Error: ${err.message}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -368,8 +376,10 @@ IEA*1*000000001~`;
     setPoInput('');
     setAsnResult(null);
     setInvoiceResult(null);
-    setError('');
     setValidationStatus(null);
+    setActiveStep(0);
+    setTabValue(0);
+    showSnackbar('All data cleared', 'info');
   };
 
   const loadSampleData = () => {
@@ -378,196 +388,236 @@ IEA*1*000000001~`;
     } else {
       setPoInput(sampleJSON);
     }
-    setError('');
+    showSnackbar('Sample data loaded', 'info');
   };
 
   return (
-    <div className="App">
-      <div className="container">
-        {/* Header */}
-        <header className="header">
-          <div className="header-content">
-            <h1 className="title">
-              <span className="icon">💎</span>
-              VICS EDI Suite
-            </h1>
-            <p className="subtitle">Advanced Ship Notice (856) & Invoice (810) Generator</p>
-          </div>
-        </header>
+    <ThemeProvider theme={darkTheme}>
+      <CssBaseline />
+      <Box sx={{ bgcolor: 'background.default', minHeight: '100vh', py: 4 }}>
+        <Container maxWidth="lg">
+          {/* Header */}
+          <Paper elevation={0} sx={{ p: 4, mb: 3, bgcolor: 'background.paper', borderRadius: 2 }}>
+            <Typography variant="h3" sx={{ fontWeight: 700, mb: 1 }}>
+              EDI Validator and Generator
+            </Typography>
+            <Typography variant="subtitle1" sx={{ color: 'text.secondary' }}>
+              Advanced Ship Notice (856) & Invoice (810) Generator
+            </Typography>
+          </Paper>
 
-        {/* Format Selection Bar */}
-        <div className="format-selection-bar">
-          <div className="format-group">
-            <label className="format-label">Input Format:</label>
-            <select
-              value={inputFormat}
-              onChange={(e) => setInputFormat(e.target.value)}
-              className="format-select"
+          {/* Stepper */}
+          <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2 }}>
+            <Stepper activeStep={activeStep}>
+              {steps.map((label) => (
+                <Step key={label}>
+                  <StepLabel>{label}</StepLabel>
+                </Step>
+              ))}
+            </Stepper>
+          </Paper>
+
+          {/* Format Selection */}
+          <Card sx={{ mb: 3, borderRadius: 2 }} elevation={0}>
+            <CardContent>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
+                <FormControl sx={{ minWidth: 200 }}>
+                  <InputLabel>Input Format</InputLabel>
+                  <Select value={inputFormat} onChange={(e) => setInputFormat(e.target.value)} label="Input Format">
+                    <MenuItem value="x12">X12 EDI</MenuItem>
+                    <MenuItem value="json">JSON</MenuItem>
+                  </Select>
+                </FormControl>
+
+                <FormControl sx={{ minWidth: 200 }}>
+                  <InputLabel>VICS Version</InputLabel>
+                  <Select value={vicsVersion} onChange={(e) => setVicsVersion(e.target.value)} label="VICS Version">
+                    <MenuItem value="4010">VICS 4010</MenuItem>
+                    <MenuItem value="5010">VICS 5010</MenuItem>
+                  </Select>
+                </FormControl>
+
+                <Box sx={{ flexGrow: 1 }} />
+
+                <Button variant="outlined" onClick={loadSampleData} startIcon={<Info />}>
+                  Load Sample
+                </Button>
+                <Button variant="outlined" color="error" onClick={clearAll} startIcon={<Delete />}>
+                  Clear All
+                </Button>
+              </Stack>
+            </CardContent>
+          </Card>
+
+          {/* Validation Status */}
+          {validationStatus && (
+            <Alert
+              severity={validationStatus.valid ? 'success' : 'error'}
+              sx={{ mb: 3, borderRadius: 2 }}
+              icon={validationStatus.valid ? <CheckCircle /> : <Error />}
             >
-              <option value="x12">X12 EDI</option>
-              <option value="json">JSON</option>
-            </select>
-          </div>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                {validationStatus.valid ? `Valid ${inputFormat.toUpperCase()} Format` : 'Validation Failed'}
+              </Typography>
 
-          <div className="format-group">
-            <label className="format-label">VICS Version:</label>
-            <select
-              value={vicsVersion}
-              onChange={(e) => setVicsVersion(e.target.value)}
-              className="format-select"
-            >
-              <option value="4010">VICS 4010</option>
-              <option value="5010">VICS 5010</option>
-            </select>
-          </div>
-
-          <div className="format-actions">
-            <button onClick={loadSampleData} className="btn btn-sample">
-              📋 Load Sample
-            </button>
-            <button onClick={clearAll} className="btn btn-clear">
-              🗑️ Clear All
-            </button>
-          </div>
-        </div>
-
-        {/* Error Display */}
-        {error && (
-          <div className="error-banner">
-            {error}
-          </div>
-        )}
-
-        {/* Validation Status */}
-        {validationStatus && (
-          <div className={`validation-panel ${validationStatus.valid ? 'valid' : 'invalid'}`}>
-            <div className="validation-header">
-              {validationStatus.valid ? (
-                <span className="validation-icon">✅ Valid {inputFormat.toUpperCase()} Format</span>
-              ) : (
-                <span className="validation-icon">❌ Validation Failed</span>
-              )}
-            </div>
-
-            {validationStatus.errors.length > 0 && (
-              <div className="validation-errors">
-                <strong>Errors:</strong>
-                <ul>
+              {validationStatus.errors.length > 0 && (
+                <Box sx={{ mb: 1 }}>
+                  <Typography variant="caption" sx={{ fontWeight: 600 }}>Errors:</Typography>
                   {validationStatus.errors.map((err, i) => (
-                    <li key={i}>{err}</li>
+                    <Chip key={i} label={err} size="small" color="error" sx={{ m: 0.5 }} />
                   ))}
-                </ul>
-              </div>
-            )}
+                </Box>
+              )}
 
-            {validationStatus.warnings.length > 0 && (
-              <div className="validation-warnings">
-                <strong>Warnings:</strong>
-                <ul>
+              {validationStatus.warnings.length > 0 && (
+                <Box>
+                  <Typography variant="caption" sx={{ fontWeight: 600 }}>Warnings:</Typography>
                   {validationStatus.warnings.map((warn, i) => (
-                    <li key={i}>{warn}</li>
+                    <Chip key={i} label={warn} size="small" color="warning" sx={{ m: 0.5 }} />
                   ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
+                </Box>
+              )}
+            </Alert>
+          )}
 
-        {/* Single Input Area */}
-        <div className="single-input-section">
-          <div className="input-header">
-            <label className="input-label">
-              850 Purchase Order ({inputFormat === 'x12' ? 'X12 EDI' : 'JSON'})
-            </label>
-            <span className="input-hint">
-              Paste your 850 PO in {inputFormat.toUpperCase()} format
-            </span>
-          </div>
-          <textarea
-            rows="15"
-            value={poInput}
-            onChange={(e) => setPoInput(e.target.value)}
-            placeholder={`Paste your 850 Purchase Order in ${inputFormat.toUpperCase()} format here...`}
-            className="input-textarea large"
-          />
-        </div>
+          {/* Tabs */}
+          <Paper elevation={0} sx={{ borderRadius: 2 }}>
+            <Tabs value={tabValue} onChange={(e, newValue) => setTabValue(newValue)} variant="fullWidth">
+              <Tab label="Input" />
+              <Tab label="ASN Result" disabled={!asnResult} />
+              <Tab label="Invoice Result" disabled={!invoiceResult} />
+            </Tabs>
 
-        {/* Generation Buttons */}
-        <div className="button-grid">
-          <button
-            onClick={handleGenerate856}
-            disabled={loading || (validationStatus && !validationStatus.valid)}
-            className="btn btn-primary btn-asn"
+            {/* Input Tab */}
+            <TabPanel value={tabValue} index={0}>
+              <Box sx={{ p: 3 }}>
+                <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
+                  850 Purchase Order ({inputFormat === 'x12' ? 'X12 EDI' : 'JSON'})
+                </Typography>
+                <TextField
+                  fullWidth
+                  multiline
+                  rows={15}
+                  value={poInput}
+                  onChange={(e) => setPoInput(e.target.value)}
+                  placeholder={`Paste your 850 Purchase Order in ${inputFormat.toUpperCase()} format here...`}
+                  variant="outlined"
+                  sx={{
+                    mb: 2,
+                    '& .MuiInputBase-root': {
+                      bgcolor: 'background.default',
+                      fontFamily: '"Roboto Mono", "Courier New", monospace',
+                      fontSize: '0.9rem',
+                    },
+                    '& .MuiOutlinedInput-notchedOutline': {
+                      borderColor: 'rgba(255, 255, 255, 0.12)',
+                    }
+                  }}
+                />
+                <Stack direction="row" spacing={2}>
+                  <Button
+                    variant="contained"
+                    size="large"
+                    onClick={handleGenerate856}
+                    disabled={loading || (validationStatus && !validationStatus.valid)}
+                    startIcon={loading ? <CircularProgress size={20} /> : <LocalShipping />}
+                    sx={{ flex: 1 }}
+                  >
+                    {loading ? 'Processing...' : 'Generate 856 ASN'}
+                  </Button>
+                  <Button
+                    variant="contained"
+                    size="large"
+                    color="secondary"
+                    onClick={handleGenerate810}
+                    disabled={loading || !asnResult}
+                    startIcon={loading ? <CircularProgress size={20} /> : <Receipt />}
+                    sx={{ flex: 1 }}
+                  >
+                    {loading ? 'Processing...' : 'Generate 810 Invoice'}
+                  </Button>
+                </Stack>
+              </Box>
+            </TabPanel>
+
+            {/* ASN Result Tab */}
+            <TabPanel value={tabValue} index={1}>
+              {asnResult && (
+                <Box sx={{ p: 3 }}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                      {asnResult.title} Created
+                    </Typography>
+                    <Stack direction="row" spacing={1}>
+                      <Tooltip title="Copy to clipboard">
+                        <IconButton onClick={() => copyToClipboard(asnResult.x12)} color="primary">
+                          <ContentCopy />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Download file">
+                        <IconButton onClick={() => downloadFile(asnResult.x12, `856_ASN_${asnResult.json.asnNumber}.edi`)} color="primary">
+                          <Download />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                  </Stack>
+                  <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default', fontFamily: '"Roboto Mono", "Courier New", monospace', fontSize: '0.9rem', overflow: 'auto', borderRadius: 1 }}>
+                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{asnResult.x12}</pre>
+                  </Paper>
+                </Box>
+              )}
+            </TabPanel>
+
+            {/* Invoice Result Tab */}
+            <TabPanel value={tabValue} index={2}>
+              {invoiceResult && (
+                <Box sx={{ p: 3 }}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                      {invoiceResult.title} Created
+                    </Typography>
+                    <Stack direction="row" spacing={1}>
+                      <Tooltip title="Copy to clipboard">
+                        <IconButton onClick={() => copyToClipboard(invoiceResult.x12)} color="primary">
+                          <ContentCopy />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Download file">
+                        <IconButton onClick={() => downloadFile(invoiceResult.x12, `810_Invoice_${invoiceResult.json.invoiceNumber}.edi`)} color="primary">
+                          <Download />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                  </Stack>
+                  <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default', fontFamily: '"Roboto Mono", "Courier New", monospace', fontSize: '0.9rem', overflow: 'auto', borderRadius: 1 }}>
+                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{invoiceResult.x12}</pre>
+                  </Paper>
+                </Box>
+              )}
+            </TabPanel>
+          </Paper>
+
+          {/* Footer */}
+          <Box sx={{ mt: 4, textAlign: 'center', color: 'text.secondary' }}>
+            <Typography variant="body2">
+              Built with React & Material-UI | VICS 4010/5010 Compliant | Real-time Validation
+            </Typography>
+          </Box>
+
+          {/* Snackbar */}
+          <Snackbar
+            open={snackbar.open}
+            autoHideDuration={4000}
+            onClose={() => setSnackbar({ ...snackbar, open: false })}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
           >
-            {loading ? '⏳ Processing...' : '📦 Generate 856 ASN'}
-          </button>
-          <button
-            onClick={handleGenerate810}
-            disabled={loading || !asnResult}
-            className="btn btn-primary btn-invoice"
-          >
-            {loading ? '⏳ Processing...' : '💰 Generate 810 Invoice'}
-          </button>
-        </div>
-
-        {/* ASN Result */}
-        {asnResult && (
-          <div className="result-container">
-            <div className="result-header">
-              <h2 className="result-title">
-                ✅ {asnResult.title} Created
-              </h2>
-              <div className="result-actions">
-                <button
-                  onClick={() => copyToClipboard(asnResult.x12)}
-                  className="btn btn-secondary"
-                >
-                  📋 Copy
-                </button>
-                <button
-                  onClick={() => downloadFile(asnResult.x12, `856_ASN_${asnResult.json.asnNumber}.edi`)}
-                  className="btn btn-download"
-                >
-                  ⬇️ Download
-                </button>
-              </div>
-            </div>
-            <pre className="result-output">{asnResult.x12}</pre>
-          </div>
-        )}
-
-        {/* Invoice Result */}
-        {invoiceResult && (
-          <div className="result-container">
-            <div className="result-header">
-              <h2 className="result-title">
-                ✅ {invoiceResult.title} Created
-              </h2>
-              <div className="result-actions">
-                <button
-                  onClick={() => copyToClipboard(invoiceResult.x12)}
-                  className="btn btn-secondary"
-                >
-                  📋 Copy
-                </button>
-                <button
-                  onClick={() => downloadFile(invoiceResult.x12, `810_Invoice_${invoiceResult.json.invoiceNumber}.edi`)}
-                  className="btn btn-download"
-                >
-                  ⬇️ Download
-                </button>
-              </div>
-            </div>
-            <pre className="result-output">{invoiceResult.x12}</pre>
-          </div>
-        )}
-
-        {/* Footer */}
-        <footer className="footer">
-          <p>Built with React & Node.js | VICS 4010/5010 Compliant | Real-time Validation</p>
-        </footer>
-      </div>
-    </div>
+            <Alert onClose={() => setSnackbar({ ...snackbar, open: false })} severity={snackbar.severity} sx={{ width: '100%' }}>
+              {snackbar.message}
+            </Alert>
+          </Snackbar>
+        </Container>
+      </Box>
+    </ThemeProvider>
   );
 }
 
