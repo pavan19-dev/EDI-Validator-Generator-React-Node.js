@@ -15,7 +15,6 @@ services:
   # Frontend Static Site
   - type: static
     name: edi-frontend
-    env: static
     plan: free
     buildCommand: cd frontend && npm install && npm run build
     staticPublishPath: ./frontend/build
