@@ -1,14 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Container, Box, Typography, TextField, Button, Card, CardContent,
   Tabs, Tab, Chip, Alert, Snackbar, IconButton,
   Select, MenuItem, FormControl, InputLabel, Paper, Stepper, Step,
-  StepLabel, CircularProgress, Tooltip, Stack, ThemeProvider, createTheme, CssBaseline
+  StepLabel, CircularProgress, Tooltip, Stack, ThemeProvider, createTheme, CssBaseline,
+  Dialog, DialogContent
 } from '@mui/material';
 import {
   ContentCopy, Download, Delete, CheckCircle,
   Error, Info, Receipt, LocalShipping,
-  SwapHoriz, DataObject, Code
+  SwapHoriz, DataObject, Code, PlayCircleOutline, Close
 } from '@mui/icons-material';
 
 // Dark theme configuration
@@ -74,6 +75,7 @@ function TabPanel({ children, value, index }) {
 
 function App() {
   const [poInput, setPoInput] = useState('');
+  const [inputType, setInputType] = useState('850'); // '850', '856', '810'
   const [inputFormat, setInputFormat] = useState('x12');
   const [vicsVersion, setVicsVersion] = useState('4010');
   const [asnResult, setAsnResult] = useState(null);
@@ -83,6 +85,8 @@ function App() {
   const [tabValue, setTabValue] = useState(0);
   const [activeStep, setActiveStep] = useState(0);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const videoRef = useRef(null);
 
   // Converter State
   const [converterInput, setConverterInput] = useState('');
@@ -137,10 +141,19 @@ function App() {
     if (!segmentTypes.includes('ISA')) errors.push('Missing ISA segment');
     if (!segmentTypes.includes('GS*')) errors.push('Missing GS segment');
     if (!segmentTypes.includes('ST*')) errors.push('Missing ST segment');
-    if (!segmentTypes.includes('BEG')) errors.push('Missing BEG segment');
 
-    const hasItems = segmentTypes.some(s => s === 'PO1');
-    if (!hasItems) warnings.push('No PO1 segments found');
+    if (inputType === '850') {
+      if (!segments.some(s => s.startsWith('ST*850'))) errors.push('Expected ST segment for 850 Purchase Order');
+      if (!segmentTypes.includes('BEG')) errors.push('Missing BEG segment for 850');
+      const hasItems = segmentTypes.some(s => s === 'PO1');
+      if (!hasItems) warnings.push('No PO1 segments found');
+    } else if (inputType === '856') {
+      if (!segments.some(s => s.startsWith('ST*856'))) errors.push('Expected ST segment for 856 ASN');
+      if (!segmentTypes.includes('BSN')) errors.push('Missing BSN segment for 856');
+    } else if (inputType === '810') {
+      if (!segments.some(s => s.startsWith('ST*810'))) errors.push('Expected ST segment for 810 Invoice');
+      if (!segmentTypes.includes('BIG')) errors.push('Missing BIG segment for 810');
+    }
 
     if (version === '4010') {
       const isa = segments.find(s => s.startsWith('ISA'));
@@ -215,6 +228,47 @@ SE*8*0001~
 GE*1*1~
 IEA*1*000000001~`;
 
+  const sample856_X12 = `ISA*00*          *00*          *ZZ*SENDERID       *ZZ*RECEIVERID     *250115*1210*U*00401*000000002*0*T*>~
+GS*SH*SENDERID*RECEIVERID*20250115*1210*1*X*004010VICS~
+ST*856*0001~
+BSN*00*ASN43843*250115*1210*0001~
+HL*1**S~
+TD1*CTN25*2~
+TD5*B*02*FDE*M*FEDERAL EXPRESS~
+REF*BM*BOL6271~
+N1*ST*BASELWAY PLAZA*9*1000~
+HL*2*1*O~
+PRF*PO123456~
+HL*3*2*I~
+LIN**VC*SKU12345~
+SN1**100*EA~
+PO4*1*1*EA~
+HL*4*2*I~
+LIN**VC*SKU67890~
+SN1**50*EA~
+PO4*1*1*EA~
+CTT*2~
+SE*19*0001~
+GE*1*2~
+IEA*1*000000002~`;
+
+  const sample810_X12 = `ISA*00*          *00*          *ZZ*SENDERID       *ZZ*RECEIVERID     *250115*1220*U*00401*000000003*0*T*>~
+GS*IN*SENDERID*RECEIVERID*20250115*1220*2*X*004010VICS~
+ST*810*0001~
+BIG*250115*INV-284912*250115*PO123456***DI~
+N1*BT*BASELWAY PLAZA*9*1000~
+ITD*01*3*2**30**31~
+IT1*1*100*EA*25.5**VC*SKU12345~
+PID*F****SKU12345~
+IT1*2*50*EA*42**VC*SKU67890~
+PID*F****SKU67890~
+TDS*469650~
+SAC*C*D240***4650****06*Freight~
+CTT*2~
+SE*13*0001~
+GE*1*2~
+IEA*1*000000003~`;
+
   const sampleJSON = `{
   "poNumber": "PO123456",
   "shipTo": {
@@ -266,26 +320,58 @@ IEA*1*000000001~`;
     try {
       const cleanEdi = ediText.replace(/[\r\n]+/g, '').trim();
       const segments = cleanEdi.split('~').filter(s => s.length > 0);
-      const beg = segments.find(s => s.startsWith('BEG'))?.split('*');
-      const n1st = segments.find(s => s.startsWith('N1*ST'))?.split('*');
-      const n1bt = segments.find(s => s.startsWith('N1*BT'))?.split('*');
 
       const items = [];
-      segments.forEach(seg => {
-        if (seg.startsWith('PO1')) {
-          const p = seg.split('*');
-          items.push({
-            sku: p[7] || p[9] || "SKU-ERR",
-            quantity: parseInt(p[2]) || 0,
-            price: parseFloat(p[4]) || 0
-          });
-        }
-      });
+      let poNumberParam = "ERR";
+      let n1stArr = segments.find(s => s.startsWith('N1*ST'))?.split('*');
+      let n1btArr = segments.find(s => s.startsWith('N1*BT'))?.split('*');
+
+      if (inputType === '850') {
+        const beg = segments.find(s => s.startsWith('BEG'))?.split('*');
+        poNumberParam = beg ? beg[3] : "ERR";
+        segments.forEach(seg => {
+          if (seg.startsWith('PO1')) {
+            const p = seg.split('*');
+            items.push({
+              sku: p[7] || p[9] || "SKU-ERR",
+              quantity: parseInt(p[2]) || 0,
+              price: parseFloat(p[4]) || 0
+            });
+          }
+        });
+      } else if (inputType === '856') {
+        const prf = segments.find(s => s.startsWith('PRF'))?.split('*');
+        poNumberParam = prf ? prf[1] : "PO-UNKNOWN";
+        
+        let currentItem = {};
+        segments.forEach(seg => {
+          if (seg.startsWith('LIN**VC')) {
+            currentItem = { sku: seg.split('*')[3] || "SKU-ERR", quantity: 0, price: 0 };
+          } else if (seg.startsWith('SN1**')) {
+            currentItem.quantity = parseInt(seg.split('*')[2]) || 0;
+            items.push(currentItem);
+          }
+        });
+      } else if (inputType === '810') {
+        const big = segments.find(s => s.startsWith('BIG'))?.split('*');
+        poNumberParam = big ? big[4] : "PO-UNKNOWN";
+        
+        segments.forEach(seg => {
+          if (seg.startsWith('IT1')) {
+            const p = seg.split('*');
+            items.push({
+              sku: p[7] || p[9] || "SKU-ERR",
+              quantity: parseInt(p[2]) || 0,
+              price: parseFloat(p[4]) || 0
+            });
+          }
+        });
+      }
 
       return {
-        poNumber: beg ? beg[3] : "ERR",
-        shipTo: n1st ? { name: n1st[2], id: n1st[4] } : { name: "RETAIL DC", id: "0001" },
-        billTo: n1bt ? { name: n1bt[2], id: n1bt[4] } : null,
+        poNumber: poNumberParam,
+        shipTo: n1stArr ? { name: n1stArr[2], id: n1stArr[4] } : { name: "RETAIL DC", id: "0001" },
+        billTo: n1btArr ? { name: n1btArr[2], id: n1btArr[4] } : null,
         items: items
       };
     } catch (e) {
@@ -459,7 +545,13 @@ IEA*1*000000001~`;
 
   const loadSampleData = () => {
     if (inputFormat === 'x12') {
-      setPoInput(vicsVersion === '4010' ? sampleX12_4010 : sampleX12_5010);
+      if (inputType === '850') {
+        setPoInput(vicsVersion === '4010' ? sampleX12_4010 : sampleX12_5010);
+      } else if (inputType === '856') {
+        setPoInput(sample856_X12);
+      } else if (inputType === '810') {
+        setPoInput(sample810_X12);
+      }
     } else {
       setPoInput(sampleJSON);
     }
@@ -473,12 +565,40 @@ IEA*1*000000001~`;
         <Container maxWidth="lg">
           {/* Header */}
           <Paper elevation={0} sx={{ p: 4, mb: 3, bgcolor: 'background.paper', borderRadius: 2 }}>
-            <Typography variant="h3" sx={{ fontWeight: 700, mb: 1 }}>
-              EDI Validator and Generator
-            </Typography>
-            <Typography variant="subtitle1" sx={{ color: 'text.secondary' }}>
-              Advanced Ship Notice (856) & Invoice (810) Generator
-            </Typography>
+            <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ sm: 'center' }} justifyContent="space-between" spacing={2}>
+              <Box>
+                <Typography variant="h3" sx={{ fontWeight: 700, mb: 1 }}>
+                  EDI Validator and Generator
+                </Typography>
+                <Typography variant="subtitle1" sx={{ color: 'text.secondary' }}>
+                  Advanced Ship Notice (856) & Invoice (810) Generator
+                </Typography>
+              </Box>
+              <Button
+                variant="contained"
+                size="large"
+                startIcon={<PlayCircleOutline />}
+                onClick={() => setTutorialOpen(true)}
+                sx={{
+                  background: 'linear-gradient(135deg, #90caf9, #ce93d8)',
+                  color: '#000',
+                  fontWeight: 700,
+                  fontSize: '1rem',
+                  px: 3,
+                  py: 1.5,
+                  borderRadius: 3,
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                  boxShadow: '0 0 24px rgba(144,202,249,0.35)',
+                  '&:hover': {
+                    background: 'linear-gradient(135deg, #bbdefb, #e1bee7)',
+                    boxShadow: '0 0 36px rgba(144,202,249,0.55)',
+                  }
+                }}
+              >
+                Watch Tutorial
+              </Button>
+            </Stack>
           </Paper>
 
           {/* Stepper */}
@@ -497,8 +617,17 @@ IEA*1*000000001~`;
             <CardContent>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
                 <FormControl sx={{ minWidth: 200 }}>
-                  <InputLabel>Input Format</InputLabel>
-                  <Select value={inputFormat} onChange={(e) => setInputFormat(e.target.value)} label="Input Format">
+                  <InputLabel>Document Type</InputLabel>
+                  <Select value={inputType} onChange={(e) => { setInputType(e.target.value); setPoInput(''); setValidationStatus(null); }} label="Document Type">
+                    <MenuItem value="850">850 Purchase Order</MenuItem>
+                    <MenuItem value="856">856 Advance Ship Notice</MenuItem>
+                    <MenuItem value="810">810 Invoice</MenuItem>
+                  </Select>
+                </FormControl>
+
+                <FormControl sx={{ minWidth: 150 }}>
+                  <InputLabel>Format</InputLabel>
+                  <Select value={inputFormat} onChange={(e) => setInputFormat(e.target.value)} label="Format">
                     <MenuItem value="x12">X12 EDI</MenuItem>
                     <MenuItem value="json">JSON</MenuItem>
                   </Select>
@@ -568,7 +697,7 @@ IEA*1*000000001~`;
             <TabPanel value={tabValue} index={0}>
               <Box sx={{ p: 3 }}>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                  850 Purchase Order ({inputFormat === 'x12' ? 'X12 EDI' : 'JSON'})
+                  {inputType === '850' ? '850 Purchase Order' : inputType === '856' ? '856 Advance Ship Notice' : '810 Invoice'} ({inputFormat === 'x12' ? 'X12 EDI' : 'JSON'})
                 </Typography>
                 <TextField
                   fullWidth
@@ -576,7 +705,7 @@ IEA*1*000000001~`;
                   rows={15}
                   value={poInput}
                   onChange={(e) => setPoInput(e.target.value)}
-                  placeholder={`Paste your 850 Purchase Order in ${inputFormat.toUpperCase()} format here...`}
+                  placeholder={`Paste your ${inputType} document in ${inputFormat.toUpperCase()} format here...`}
                   variant="outlined"
                   sx={{
                     mb: 2,
@@ -591,27 +720,31 @@ IEA*1*000000001~`;
                   }}
                 />
                 <Stack direction="row" spacing={2}>
-                  <Button
-                    variant="contained"
-                    size="large"
-                    onClick={handleGenerate856}
-                    disabled={loading || (validationStatus && !validationStatus.valid)}
-                    startIcon={loading ? <CircularProgress size={20} /> : <LocalShipping />}
-                    sx={{ flex: 1 }}
-                  >
-                    {loading ? 'Processing...' : 'Generate 856 ASN'}
-                  </Button>
-                  <Button
-                    variant="contained"
-                    size="large"
-                    color="secondary"
-                    onClick={handleGenerate810}
-                    disabled={loading || !asnResult}
-                    startIcon={loading ? <CircularProgress size={20} /> : <Receipt />}
-                    sx={{ flex: 1 }}
-                  >
-                    {loading ? 'Processing...' : 'Generate 810 Invoice'}
-                  </Button>
+                  {(inputType === '850' || inputType === '810') && (
+                    <Button
+                      variant="contained"
+                      size="large"
+                      onClick={handleGenerate856}
+                      disabled={loading || (validationStatus && !validationStatus.valid)}
+                      startIcon={loading ? <CircularProgress size={20} /> : <LocalShipping />}
+                      sx={{ flex: 1 }}
+                    >
+                      {loading ? 'Processing...' : 'Generate 856 ASN'}
+                    </Button>
+                  )}
+                  {inputType === '856' && (
+                    <Button
+                      variant="contained"
+                      size="large"
+                      color="secondary"
+                      onClick={handleGenerate810}
+                      disabled={loading || (validationStatus && !validationStatus.valid)}
+                      startIcon={loading ? <CircularProgress size={20} /> : <Receipt />}
+                      sx={{ flex: 1 }}
+                    >
+                      {loading ? 'Processing...' : 'Generate 810 Invoice'}
+                    </Button>
+                  )}
                 </Stack>
               </Box>
             </TabPanel>
@@ -637,9 +770,20 @@ IEA*1*000000001~`;
                       </Tooltip>
                     </Stack>
                   </Stack>
-                  <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default', fontFamily: '"Roboto Mono", "Courier New", monospace', fontSize: '0.9rem', overflow: 'auto', borderRadius: 1 }}>
+                  <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default', fontFamily: '"Roboto Mono", "Courier New", monospace', fontSize: '0.9rem', overflow: 'auto', borderRadius: 1, mb: 3 }}>
                     <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{asnResult.x12}</pre>
                   </Paper>
+                  <Button
+                    variant="contained"
+                    size="large"
+                    color="secondary"
+                    onClick={handleGenerate810}
+                    disabled={loading}
+                    startIcon={loading ? <CircularProgress size={20} /> : <Receipt />}
+                    fullWidth
+                  >
+                    {loading ? 'Processing...' : 'Generate 810 Invoice'}
+                  </Button>
                 </Box>
               )}
             </TabPanel>
@@ -741,11 +885,14 @@ IEA*1*000000001~`;
                   <Box sx={{ flex: 1 }}>
                     <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
                       <Typography variant="subtitle2" color="text.secondary">Output ({conversionDirection === 'x12-to-json' ? 'JSON' : 'X12'})</Typography>
-                      <Tooltip title="Copy">
-                        <IconButton size="small" onClick={() => copyToClipboard(converterOutput)}>
-                          <ContentCopy fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
+                      <Stack direction="row" spacing={1}>
+                        <Tooltip title="Copy">
+                          <IconButton size="small" onClick={() => copyToClipboard(converterOutput)}>
+                            <ContentCopy fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Button size="small" color="error" onClick={() => setConverterOutput('')} startIcon={<Delete />}>Clear</Button>
+                      </Stack>
                     </Stack>
                     <TextField
                       fullWidth
@@ -786,6 +933,55 @@ IEA*1*000000001~`;
               {snackbar.message}
             </Alert>
           </Snackbar>
+
+          {/* Tutorial Video Dialog */}
+          <Dialog
+            open={tutorialOpen}
+            onClose={() => { setTutorialOpen(false); if (videoRef.current) videoRef.current.pause(); }}
+            maxWidth="xl"
+            fullWidth
+            PaperProps={{
+              sx: {
+                bgcolor: '#0a0a0a',
+                borderRadius: 3,
+                boxShadow: '0 0 80px rgba(144,202,249,0.2)',
+                border: '1.5px solid rgba(144,202,249,0.15)',
+                overflow: 'hidden',
+              }
+            }}
+          >
+            {/* Dialog header */}
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 3, py: 1.5, borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+              <Stack direction="row" alignItems="center" spacing={1.5}>
+                <PlayCircleOutline sx={{ color: '#90caf9', fontSize: 26 }} />
+                <Typography variant="h6" sx={{ color: '#fff', fontWeight: 700 }}>
+                  EDI Tool — Video Tutorial
+                </Typography>
+                <Chip label="27s" size="small" sx={{ bgcolor: 'rgba(144,202,249,0.1)', color: '#90caf9', fontSize: 12 }} />
+              </Stack>
+              <IconButton
+                onClick={() => { setTutorialOpen(false); if (videoRef.current) videoRef.current.pause(); }}
+                sx={{ color: 'rgba(255,255,255,0.5)', '&:hover': { color: '#fff' } }}
+              >
+                <Close />
+              </IconButton>
+            </Box>
+
+            <DialogContent sx={{ p: 0, bgcolor: '#000' }}>
+              <video
+                ref={videoRef}
+                src="/tutorial.mp4"
+                controls
+                autoPlay
+                style={{
+                  width: '100%',
+                  display: 'block',
+                  maxHeight: '78vh',
+                  backgroundColor: '#000',
+                }}
+              />
+            </DialogContent>
+          </Dialog>
         </Container>
       </Box>
     </ThemeProvider>

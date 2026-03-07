@@ -184,23 +184,68 @@ const validateASNData = (asn) => {
     return true;
 };
 
+const validateInvoiceData = (invoice) => {
+    const errors = [];
+    
+    if (!invoice) {
+        errors.push('Invoice data is required');
+        throw new Error(errors.join(', '));
+    }
+    
+    if (!invoice.items || !Array.isArray(invoice.items)) {
+        errors.push('Invoice must contain an items array');
+    } else if (invoice.items.length === 0) {
+        errors.push('Invoice must contain at least one item');
+    } else {
+        invoice.items.forEach((item, index) => {
+            if (!item.sku) {
+                errors.push(`Invoice item ${index + 1}: Missing SKU`);
+            }
+            if (!item.qty && item.qty !== 0) {
+                errors.push(`Invoice item ${index + 1}: Missing quantity`);
+            }
+            if (item.qty <= 0) {
+                errors.push(`Invoice item ${index + 1}: Quantity must be greater than 0`);
+            }
+        });
+    }
+    
+    if (errors.length > 0) {
+        throw new Error(errors.join(', '));
+    }
+    
+    return true;
+};
+
 // --- API ROUTES ---
 app.post('/api/generate-856', (req, res) => {
     try {
-        const { po, vicsVersion = '4010' } = req.body;
+        const { po, invoice, vicsVersion = '4010' } = req.body;
         
-        // Validate input
-        validatePOData(po);
+        let sourceData, poNum, shipToNode, itemsNode;
+
+        if (po) {
+            validatePOData(po);
+            sourceData = po;
+            poNum = po.poNumber;
+            shipToNode = po.shipTo || { name: "RETAIL DC", id: "0001" };
+            itemsNode = po.items.map(i => ({ sku: i.sku, qty: i.quantity }));
+        } else if (invoice) {
+            validateInvoiceData(invoice);
+            sourceData = invoice;
+            poNum = invoice.poNumber || "PO-UNKNOWN";
+            shipToNode = invoice.billTo || invoice.shipTo || { name: "RETAIL DC", id: "0001" };
+            itemsNode = invoice.items.map(i => ({ sku: i.sku, qty: i.qty || i.quantity }));
+        } else {
+            throw new Error("Either PO or Invoice data is required to generate ASN");
+        }
         
         const asnData = { 
             asnNumber: `ASN${Date.now().toString().slice(-5)}`,
             bolNumber: `BOL${Math.floor(Math.random() * 100000)}`,
-            poNumber: po.poNumber,
-            shipTo: po.shipTo || { name: "RETAIL DC", id: "0001" },
-            items: po.items.map(i => ({ 
-                sku: i.sku, 
-                qty: i.quantity 
-            })) 
+            poNumber: poNum,
+            shipTo: shipToNode,
+            items: itemsNode
         };
         
         const x12 = convertTo856(asnData, vicsVersion);
@@ -230,25 +275,41 @@ app.post('/api/generate-810', (req, res) => {
         const { asn, po, vicsVersion = '4010' } = req.body;
         
         // Validate inputs
+        if (!asn) throw new Error("ASN data is required to generate Invoice");
         validateASNData(asn);
-        validatePOData(po);
         
-        // Match ASN items with PO items to get pricing
-        const invoiceItems = asn.items.map(asnItem => {
-            const poMatch = po.items.find(p => p.sku === asnItem.sku);
+        let invoiceItems;
+        let poNum = asn.poNumber || "PO-UNKNOWN";
+        let billToNode = asn.shipTo || { name: "RETAIL DC", id: "0001" };
+
+        if (po) {
+            validatePOData(po);
+            poNum = po.poNumber;
+            if (po.billTo) billToNode = po.billTo;
             
-            if (!poMatch) {
-                throw new Error(`SKU ${asnItem.sku} from ASN not found in PO`);
-            }
-            
-            const price = poMatch.price || 0;
-            return { 
-                sku: asnItem.sku, 
-                qty: asnItem.qty, 
-                unitPrice: price, 
-                lineTotal: asnItem.qty * price 
-            };
-        });
+            // Match ASN items with PO items to get pricing
+            invoiceItems = asn.items.map(asnItem => {
+                const poMatch = po.items.find(p => p.sku === asnItem.sku);
+                const price = poMatch && poMatch.price ? poMatch.price : (asnItem.unitPrice || 25.00);
+                return { 
+                    sku: asnItem.sku, 
+                    qty: asnItem.qty, 
+                    unitPrice: price, 
+                    lineTotal: asnItem.qty * price 
+                };
+            });
+        } else {
+            // Generate straight from ASN, mock default pricing
+            invoiceItems = asn.items.map(asnItem => {
+                const price = asnItem.unitPrice || asnItem.price || 42.00; // Mock default
+                return { 
+                    sku: asnItem.sku, 
+                    qty: asnItem.qty, 
+                    unitPrice: price, 
+                    lineTotal: asnItem.qty * price 
+                };
+            });
+        }
         
         const subtotal = invoiceItems.reduce((sum, i) => sum + i.lineTotal, 0);
         const freight = subtotal * 0.01; // 1% freight charge
@@ -257,8 +318,8 @@ app.post('/api/generate-810', (req, res) => {
         
         const invoiceData = {
             invoiceNumber: `INV-${Date.now().toString().slice(-6)}`,
-            poNumber: po.poNumber,
-            billTo: po.billTo || po.shipTo || { name: "RETAIL DC", id: "0001" },
+            poNumber: poNum,
+            billTo: billToNode,
             items: invoiceItems,
             subtotal: subtotal,
             freight: freight,
@@ -301,26 +362,21 @@ app.get('/api/health', (req, res) => {
 // Validation endpoint for testing
 app.post('/api/validate', (req, res) => {
     try {
-        const { data, type } = req.body; // type: 'po' or 'asn'
+        const { data, type } = req.body; // type: 'po', 'asn', or 'invoice'
         
         if (type === 'po') {
             validatePOData(data);
-            res.json({
-                valid: true,
-                message: 'PO data is valid',
-                success: true
-            });
+            res.json({ valid: true, message: 'PO data is valid', success: true });
         } else if (type === 'asn') {
             validateASNData(data);
-            res.json({
-                valid: true,
-                message: 'ASN data is valid',
-                success: true
-            });
+            res.json({ valid: true, message: 'ASN data is valid', success: true });
+        } else if (type === 'invoice') {
+            validateInvoiceData(data);
+            res.json({ valid: true, message: 'Invoice data is valid', success: true });
         } else {
             res.status(400).json({
                 valid: false,
-                error: 'Invalid validation type. Use "po" or "asn"',
+                error: 'Invalid validation type. Use "po", "asn", or "invoice"',
                 success: false
             });
         }
